@@ -1,6 +1,5 @@
 using backend.Dtos;
 using backend.Services.Account;
-using backend.Services.Results;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -14,26 +13,26 @@ public sealed class AccountController(IAccountService accountService) : Controll
     [HttpGet("me")]
     [Authorize]
     public Task<IActionResult> GetMe(CancellationToken cancellationToken)
-        => Exec(() => accountService.GetMeAsync(cancellationToken));
+        => accountService.GetMeAsync(cancellationToken).ToActionResult();
 
     [HttpPatch]
     [Authorize]
     public Task<IActionResult> UpdateProfile([FromBody] UpdateProfileRequest request,
         CancellationToken cancellationToken)
-        => Exec(() => accountService.UpdateProfileAsync(request, cancellationToken));
+        => accountService.UpdateProfileAsync(request, cancellationToken).ToActionResult();
 
     [HttpPost("password/change")]
     [Authorize]
     public Task<IActionResult> ChangePassword([FromBody] PasswordChangeRequest request,
         CancellationToken cancellationToken)
-        => Exec(() => accountService.ChangePasswordAsync(request, cancellationToken));
+        => accountService.ChangePasswordAsync(request, cancellationToken).ToActionResult();
 
     [HttpPost("email/change")]
     [Authorize]
     [EnableRateLimiting("Auth")]
     public Task<IActionResult> ChangeEmail([FromBody] ChangeEmailRequest request,
         CancellationToken cancellationToken)
-        => Exec(() => accountService.ChangeEmailAsync(request, cancellationToken));
+        => accountService.ChangeEmailAsync(request, cancellationToken).ToActionResult();
 
     [HttpPost("email/change/verify")]
     [Authorize]
@@ -41,7 +40,7 @@ public sealed class AccountController(IAccountService accountService) : Controll
     public Task<IActionResult> ChangeEmailVerify(
         [FromBody] ChangeEmailVerifyRequest request,
         CancellationToken cancellationToken)
-        => Exec(() => accountService.ChangeEmailVerifyAsync(request, cancellationToken));
+        => accountService.ChangeEmailVerifyAsync(request, cancellationToken).ToActionResult();
 
     [HttpPost("email/change/cancel")]
     [Authorize]
@@ -49,14 +48,14 @@ public sealed class AccountController(IAccountService accountService) : Controll
     public Task<IActionResult> ChangeEmailCancel(
         [FromBody] ChangeEmailCancelRequest request,
         CancellationToken cancellationToken)
-        => Exec(() => accountService.ChangeEmailCancelAsync(request, cancellationToken));
+        => accountService.ChangeEmailCancelAsync(request, cancellationToken).ToActionResult();
 
     [HttpPost("phone/change")]
     [Authorize]
     [EnableRateLimiting("Auth")]
     public Task<IActionResult> ChangePhone([FromBody] ChangePhoneRequest request,
         CancellationToken cancellationToken)
-        => Exec(() => accountService.ChangePhoneAsync(request, cancellationToken));
+        => accountService.ChangePhoneAsync(request, cancellationToken).ToActionResult();
 
     [HttpPost("phone/change/verify")]
     [Authorize]
@@ -64,7 +63,7 @@ public sealed class AccountController(IAccountService accountService) : Controll
     public Task<IActionResult> ChangePhoneVerify(
         [FromBody] ChangePhoneVerifyRequest request,
         CancellationToken cancellationToken)
-        => Exec(() => accountService.ChangePhoneVerifyAsync(request, cancellationToken));
+        => accountService.ChangePhoneVerifyAsync(request, cancellationToken).ToActionResult();
 
     [HttpPost("phone/change/cancel")]
     [Authorize]
@@ -72,26 +71,20 @@ public sealed class AccountController(IAccountService accountService) : Controll
     public Task<IActionResult> ChangePhoneCancel(
         [FromBody] ChangePhoneCancelRequest request,
         CancellationToken cancellationToken)
-        => Exec(() => accountService.ChangePhoneCancelAsync(request, cancellationToken));
+        => accountService.ChangePhoneCancelAsync(request, cancellationToken).ToActionResult();
 
     [HttpGet("sessions")]
     [Authorize]
     public Task<IActionResult> GetSessions(CancellationToken cancellationToken)
-        => Exec(() => accountService.GetSessionsAsync(cancellationToken));
+        => accountService.GetSessionsAsync(cancellationToken).ToActionResult();
 
     [HttpPost("logout")]
     [Authorize]
     public Task<IActionResult> Logout(CancellationToken cancellationToken)
-        => Exec(() => accountService.LogoutAsync(cancellationToken));
+        => accountService.LogoutAsync(cancellationToken).ToActionResult();
 
     [HttpPost("logout/all")]
     [Authorize]
     public Task<IActionResult> LogoutAll(CancellationToken cancellationToken)
-        => Exec(() => accountService.LogoutAllAsync(cancellationToken));
-
-    private static async Task<IActionResult> Exec(Func<Task<Result>> action)
-        => (await action()).ToActionResult();
-
-    private static async Task<IActionResult> Exec<T>(Func<Task<Result<T>>> action)
-        => (await action()).ToActionResult();
+        => accountService.LogoutAllAsync(cancellationToken).ToActionResult();
 }

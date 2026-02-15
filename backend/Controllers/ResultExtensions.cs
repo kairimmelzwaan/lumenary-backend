@@ -5,7 +5,7 @@ namespace backend.Controllers;
 
 public static class ResultExtensions
 {
-    public static IActionResult ToActionResult(this Result result)
+    private static IActionResult ToActionResult(this Result result)
     {
         return result.Status switch
         {
@@ -35,5 +35,22 @@ public static class ResultExtensions
             ResultStatus.ServiceUnavailable => new StatusCodeResult(StatusCodes.Status503ServiceUnavailable),
             _ => new StatusCodeResult(StatusCodes.Status500InternalServerError)
         };
+    }
+
+    public static async Task<IActionResult> ToActionResult(this Task<Result> task)
+        => (await task).ToActionResult();
+
+    public static async Task<IActionResult> ToActionResult<T>(this Task<Result<T>> task)
+        => (await task).ToActionResult();
+
+    public static async Task<IActionResult> ToActionResult<T>(
+        this Task<Result<T>> task,
+        Func<T, IActionResult> onSuccess)
+    {
+        var result = await task;
+        if (result.IsSuccess && result.Value is not null)
+            return onSuccess(result.Value);
+
+        return result.ToActionResult();
     }
 }

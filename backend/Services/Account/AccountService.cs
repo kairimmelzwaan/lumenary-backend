@@ -100,9 +100,33 @@ public sealed class AccountService(
         if (passwordResult == PasswordVerificationResult.Failed)
             return Result.Unauthorized();
 
+        var now = DateTime.UtcNow;
         user.PasswordHash = passwordHasher.HashPassword(user, request.NewPassword);
         user.MustChangePassword = false;
-        user.UpdatedAt = DateTime.UtcNow;
+        user.UpdatedAt = now;
+
+        if (currentUserAccessor.TryGetSessionId(out var currentSessionId))
+        {
+            var sessions = await dbContext.Sessions
+                .Where(s => s.UserId == userId && s.RevokedAt == null && s.Id != currentSessionId)
+                .ToListAsync(cancellationToken);
+
+            foreach (var session in sessions)
+            {
+                session.RevokedAt = now;
+            }
+        }
+        else
+        {
+            var sessions = await dbContext.Sessions
+                .Where(s => s.UserId == userId && s.RevokedAt == null)
+                .ToListAsync(cancellationToken);
+
+            foreach (var session in sessions)
+            {
+                session.RevokedAt = now;
+            }
+        }
 
         await dbContext.SaveChangesAsync(cancellationToken);
         return Result.Ok();

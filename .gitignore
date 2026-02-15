@@ -1,8 +1,11 @@
 # Build output
 bin/
+backend/bin/
+backend/obj/
 obj/
 **/bin/
 **/obj/
+backend/bin\\Debug/
 
 # Rider / IntelliJ
 .idea/

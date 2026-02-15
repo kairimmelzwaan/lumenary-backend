@@ -6,4 +6,4 @@ namespace backend.Dtos;
 public sealed record PasswordResetVerifyRequest(
     [param: NotEmptyGuid] Guid ChallengeId,
     [param: VerificationCode] string Code,
-    [param: NotWhiteSpace, StringLength(ValidationConstants.PasswordMaxLength)] string NewPassword);
+    [param: NotWhiteSpace, PasswordStrength, StringLength(ValidationConstants.PasswordMaxLength)] string NewPassword);

@@ -5,4 +5,4 @@ namespace backend.Dtos;
 
 public sealed record PasswordChangeRequest(
     [param: NotWhiteSpace, StringLength(ValidationConstants.PasswordMaxLength)] string CurrentPassword,
-    [param: NotWhiteSpace, StringLength(ValidationConstants.PasswordMaxLength)] string NewPassword);
+    [param: NotWhiteSpace, PasswordStrength, StringLength(ValidationConstants.PasswordMaxLength)] string NewPassword);

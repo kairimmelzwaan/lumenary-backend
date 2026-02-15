@@ -1,6 +1,8 @@
 using backend.Auth.Challenges;
 using backend.Auth.Identity;
+using backend.Auth.AnonymousOnly;
 using backend.Auth.Options;
+using backend.Auth.RateLimiting;
 using backend.Auth.Sessions;
 using backend.Data;
 using backend.Models;
@@ -12,6 +14,8 @@ using backend.Services.Auth.ResendPolicies;
 using backend.Services.Requests;
 using backend.Services.Users;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -26,7 +30,24 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
-builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
+builder.Services.AddOptions<AuthOptions>()
+    .Bind(builder.Configuration.GetSection("Auth"))
+    .Validate(
+        options => !string.IsNullOrWhiteSpace(options.SessionTokenKey) &&
+                   options.SessionTokenKey.Length >= 32 &&
+                   !IsPlaceholderSecret(options.SessionTokenKey),
+        "Auth:SessionTokenKey must be configured and at least 32 characters.")
+    .Validate(
+        options => string.IsNullOrWhiteSpace(options.VerificationCodeKey) ||
+                   !IsPlaceholderSecret(options.VerificationCodeKey),
+        "Auth:VerificationCodeKey must not use placeholder values.")
+    .ValidateOnStart();
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+});
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IAccountService, AccountService>();
 builder.Services.AddScoped<IAppointmentsService, AppointmentsService>();
@@ -80,7 +101,13 @@ builder.Services.AddAuthentication(options =>
     .AddScheme<AuthenticationSchemeOptions, SessionAuthenticationHandler>(
         SessionAuthenticationDefaults.Scheme,
         _ => { });
-builder.Services.AddAuthorization();
+builder.Services.AddSingleton<IAuthorizationHandler, AnonymousOnlyHandler>();
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy(AnonymousOnlyAttribute.PolicyName,
+        policy => policy.AddRequirements(new AnonymousOnlyRequirement()));
+});
+builder.Services.AddSingleton<AuthIdentifierRateLimiter>();
 
 var app = builder.Build();
 
@@ -133,11 +160,13 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseForwardedHeaders();
 app.UseHttpsRedirection();
 app.UseStaticFiles();
 
 app.UseRouting();
 
+app.UseMiddleware<AuthIdentifierRateLimitingMiddleware>();
 app.UseRateLimiter();
 
 app.UseAuthentication();
@@ -146,3 +175,8 @@ app.UseAuthorization();
 app.MapControllers();
 
 app.Run();
+
+static bool IsPlaceholderSecret(string value)
+    => string.Equals(value, "CHANGE_ME", StringComparison.OrdinalIgnoreCase) ||
+       string.Equals(value, "CHANGEME", StringComparison.OrdinalIgnoreCase) ||
+       string.Equals(value, "REPLACE_ME", StringComparison.OrdinalIgnoreCase);

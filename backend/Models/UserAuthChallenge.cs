@@ -9,7 +9,9 @@ public class UserAuthChallenge
     public string? TargetPhoneE164 { get; set; }
     public byte[] CodeHash { get; set; } = null!;
     public int AttemptCount { get; set; }
+    public int ResendCount { get; set; }
     public DateTime CreatedAt { get; set; }
+    public DateTime? LastResentAt { get; set; }
     public DateTime ExpiresAt { get; set; }
     public DateTime? VerifiedAt { get; set; }
 

@@ -10,21 +10,18 @@ using Microsoft.Extensions.Options;
 
 namespace backend.Services.Auth;
 
-public sealed class AuthChallengeService : IAuthChallengeService
+public sealed class AuthChallengeService(
+    AppDbContext dbContext,
+    IOptions<AuthOptions> options,
+    IEnumerable<IChallengeResendPolicy> resendPolicies)
+    : IAuthChallengeService
 {
-    private readonly AppDbContext _dbContext;
-    private readonly AuthOptions _options;
-    private readonly IReadOnlyDictionary<ChallengePurpose, IChallengeResendPolicy> _resendPolicies;
+    private readonly AuthOptions _options = options.Value;
+    private readonly string? _verificationCodeKey =
+        options.Value.VerificationCodeKey ?? options.Value.SessionTokenKey;
 
-    public AuthChallengeService(
-        AppDbContext dbContext,
-        IOptions<AuthOptions> options,
-        IEnumerable<IChallengeResendPolicy> resendPolicies)
-    {
-        _dbContext = dbContext;
-        _options = options.Value;
-        _resendPolicies = resendPolicies.ToDictionary(policy => policy.Purpose);
-    }
+    private readonly IReadOnlyDictionary<ChallengePurpose, IChallengeResendPolicy> _resendPolicies =
+        resendPolicies.ToDictionary(policy => policy.Purpose);
 
     public async Task<AuthChallengeCreation> CreateChallengeAsync(
         AuthChallengeRequest request,
@@ -32,8 +29,8 @@ public sealed class AuthChallengeService : IAuthChallengeService
         CancellationToken cancellationToken)
     {
         var code = VerificationCodeUtilities.CreateCode();
-        var codeHash = VerificationCodeUtilities.ComputeHash(code, _options.SessionTokenKey);
-        var expiresAt = now.AddMinutes(_options.LoginCodeTtlMinutes);
+        var codeHash = VerificationCodeUtilities.ComputeHash(code, _verificationCodeKey);
+        var expiresAt = GetExpiresAt(now, now);
 
         var challenge = new UserAuthChallenge
         {
@@ -43,17 +40,17 @@ public sealed class AuthChallengeService : IAuthChallengeService
             TargetPhoneE164 = request.TargetPhoneE164,
             CodeHash = codeHash,
             AttemptCount = 0,
+            ResendCount = 0,
             CreatedAt = now,
+            LastResentAt = null,
             ExpiresAt = expiresAt
         };
 
         if (request.ChallengeId.HasValue)
-        {
             challenge.Id = request.ChallengeId.Value;
-        }
 
-        _dbContext.UserAuthChallenges.Add(challenge);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        dbContext.UserAuthChallenges.Add(challenge);
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         return new AuthChallengeCreation(challenge.Id, code);
     }
@@ -65,7 +62,7 @@ public sealed class AuthChallengeService : IAuthChallengeService
         DateTime now,
         CancellationToken cancellationToken)
     {
-        var query = _dbContext.UserAuthChallenges
+        var query = dbContext.UserAuthChallenges
             .Include(c => c.User)
             .Where(c => c.Id == challengeId &&
                         c.Purpose == purpose.ToValue() &&
@@ -73,15 +70,11 @@ public sealed class AuthChallengeService : IAuthChallengeService
                         c.ExpiresAt > now);
 
         if (userId.HasValue)
-        {
             query = query.Where(c => c.UserId == userId.Value);
-        }
 
         var challenge = await query.FirstOrDefaultAsync(cancellationToken);
         if (challenge == null || !challenge.User.IsActive)
-        {
             return Result<UserAuthChallenge>.Unauthorized();
-        }
 
         return Result<UserAuthChallenge>.Ok(challenge);
     }
@@ -93,19 +86,17 @@ public sealed class AuthChallengeService : IAuthChallengeService
         CancellationToken cancellationToken)
     {
         if (challenge.AttemptCount >= AuthChallengePolicy.MaxAttempts)
-        {
             return Result.TooManyRequests();
-        }
 
-        var providedHash = VerificationCodeUtilities.ComputeHash(code, _options.SessionTokenKey);
+        var providedHash = VerificationCodeUtilities.ComputeHash(code, _verificationCodeKey);
         if (!challenge.CodeHash.SequenceEqual(providedHash))
         {
-            if (challenge.AttemptCount < AuthChallengePolicy.MaxAttempts)
-            {
-                challenge.AttemptCount += 1;
-            }
+            challenge.AttemptCount += 1;
 
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            if (challenge.AttemptCount >= AuthChallengePolicy.MaxAttempts)
+                challenge.ExpiresAt = now;
+
+            await dbContext.SaveChangesAsync(cancellationToken);
             return Result.Unauthorized();
         }
 
@@ -119,7 +110,7 @@ public sealed class AuthChallengeService : IAuthChallengeService
         DateTime now,
         CancellationToken cancellationToken)
     {
-        var challenge = await _dbContext.UserAuthChallenges
+        var challenge = await dbContext.UserAuthChallenges
             .Include(c => c.User)
             .Where(c => c.Id == challengeId &&
                         c.VerifiedAt == null &&
@@ -127,19 +118,11 @@ public sealed class AuthChallengeService : IAuthChallengeService
             .FirstOrDefaultAsync(cancellationToken);
 
         if (challenge == null || !challenge.User.IsActive)
-        {
             return Result<AuthChallengeResendResult>.NotFound();
-        }
 
-        if (!ChallengePurposeExtensions.TryParse(challenge.Purpose, out var purpose))
-        {
+        if (!ChallengePurposeExtensions.TryParse(challenge.Purpose, out var purpose) ||
+            !_resendPolicies.TryGetValue(purpose, out var policy))
             return Result<AuthChallengeResendResult>.BadRequest();
-        }
-
-        if (!_resendPolicies.TryGetValue(purpose, out var policy))
-        {
-            return Result<AuthChallengeResendResult>.BadRequest();
-        }
 
         var policyResult = policy.Validate(challenge, requesterUserId);
         if (!policyResult.IsSuccess)
@@ -148,18 +131,45 @@ public sealed class AuthChallengeService : IAuthChallengeService
             {
                 ResultStatus.Unauthorized => Result<AuthChallengeResendResult>.Unauthorized(),
                 ResultStatus.BadRequest => Result<AuthChallengeResendResult>.BadRequest(),
+                ResultStatus.TooManyRequests => Result<AuthChallengeResendResult>.TooManyRequests(),
                 _ => Result<AuthChallengeResendResult>.BadRequest()
             };
         }
 
+        if (challenge.AttemptCount >= AuthChallengePolicy.MaxAttempts ||
+            challenge.ResendCount >= AuthChallengePolicy.MaxResends)
+            return Result<AuthChallengeResendResult>.TooManyRequests();
+
+        var maxLifetimeAt = challenge.CreatedAt.AddMinutes(AuthChallengePolicy.MaxLifetimeMinutes);
+        if (maxLifetimeAt <= now)
+            return Result<AuthChallengeResendResult>.TooManyRequests();
+
+        if (challenge.LastResentAt.HasValue &&
+            challenge.LastResentAt.Value
+                .AddSeconds(AuthChallengePolicy.ResendCooldownSeconds) > now)
+            return Result<AuthChallengeResendResult>.TooManyRequests();
+
         var code = VerificationCodeUtilities.CreateCode();
-        challenge.CodeHash = VerificationCodeUtilities.ComputeHash(code, _options.SessionTokenKey);
-        challenge.AttemptCount = 0;
-        challenge.ExpiresAt = now.AddMinutes(_options.LoginCodeTtlMinutes);
+        challenge.CodeHash = VerificationCodeUtilities.ComputeHash(code, _verificationCodeKey);
+        challenge.ResendCount += 1;
+        challenge.LastResentAt = now;
+        challenge.ExpiresAt = GetExpiresAt(challenge.CreatedAt, now);
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
 
-        var responseCode = purpose is ChallengePurpose.Login or ChallengePurpose.Register ? code : null;
-        return Result<AuthChallengeResendResult>.Ok(new AuthChallengeResendResult(challenge.Id, responseCode));
+        var responseCode =
+            purpose is ChallengePurpose.Login or ChallengePurpose.Register
+                ? code
+                : null;
+
+        return Result<AuthChallengeResendResult>.Ok(
+            new AuthChallengeResendResult(challenge.Id, responseCode));
+    }
+
+    private DateTime GetExpiresAt(DateTime createdAt, DateTime now)
+    {
+        var ttlExpiresAt = now.AddMinutes(_options.LoginCodeTtlMinutes);
+        var maxLifetimeAt = createdAt.AddMinutes(AuthChallengePolicy.MaxLifetimeMinutes);
+        return ttlExpiresAt <= maxLifetimeAt ? ttlExpiresAt : maxLifetimeAt;
     }
 }

@@ -43,6 +43,9 @@ public class SessionConfig : IEntityTypeConfiguration<Session>
 
         builder.Property(u => u.ReplacedBySessionId);
 
+        builder.HasIndex(s => s.SessionTokenHash)
+            .IsUnique();
+
         builder.HasIndex(s => new { s.UserId, s.ExpiresAt });
 
         builder.HasOne(s => s.User)

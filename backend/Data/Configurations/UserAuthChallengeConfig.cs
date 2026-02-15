@@ -36,9 +36,15 @@ public class UserAuthChallengeConfig : IEntityTypeConfiguration<UserAuthChalleng
         builder.Property(c => c.AttemptCount)
             .HasDefaultValue(0);
 
+        builder.Property(c => c.ResendCount)
+            .HasDefaultValue(0);
+
         builder.Property(c => c.CreatedAt)
             .HasColumnType("timestamptz")
             .HasDefaultValueSql("now()");
+
+        builder.Property(c => c.LastResentAt)
+            .HasColumnType("timestamptz");
 
         builder.Property(c => c.ExpiresAt)
             .HasColumnType("timestamptz")

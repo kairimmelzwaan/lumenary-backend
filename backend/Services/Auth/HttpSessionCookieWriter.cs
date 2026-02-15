@@ -3,40 +3,41 @@ using Microsoft.Extensions.Options;
 
 namespace backend.Services.Auth;
 
-public sealed class HttpSessionCookieWriter : ISessionCookieWriter
+public sealed class HttpSessionCookieWriter(IHttpContextAccessor httpContextAccessor, IOptions<AuthOptions> options)
+    : ISessionCookieWriter
 {
-    private readonly IHttpContextAccessor _httpContextAccessor;
-    private readonly AuthOptions _options;
-
-    public HttpSessionCookieWriter(IHttpContextAccessor httpContextAccessor, IOptions<AuthOptions> options)
-    {
-        _httpContextAccessor = httpContextAccessor;
-        _options = options.Value;
-    }
+    private readonly AuthOptions _options = options.Value;
 
     public void WriteSessionCookie(string token, DateTime expiresAt)
     {
-        var httpContext = _httpContextAccessor.HttpContext
+        var httpContext = httpContextAccessor.HttpContext
             ?? throw new InvalidOperationException("HttpContext is required to set session cookies.");
 
         var cookieOptions = new CookieOptions
         {
             HttpOnly = true,
-            Secure = httpContext.Request.IsHttps,
+            Secure = true,
             SameSite = SameSiteMode.Lax,
             Expires = expiresAt,
-            IsEssential = true
+            IsEssential = true,
+            Path = "/"
         };
 
-        // Ensure ForwardedHeaders middleware is configured when behind a proxy.
         httpContext.Response.Cookies.Append(_options.CookieName, token, cookieOptions);
     }
 
     public void ClearSessionCookie()
     {
-        var httpContext = _httpContextAccessor.HttpContext
+        var httpContext = httpContextAccessor.HttpContext
             ?? throw new InvalidOperationException("HttpContext is required to clear session cookies.");
 
-        httpContext.Response.Cookies.Delete(_options.CookieName);
+        httpContext.Response.Cookies.Delete(_options.CookieName, new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = true,
+            SameSite = SameSiteMode.Lax,
+            IsEssential = true,
+            Path = "/"
+        });
     }
 }
